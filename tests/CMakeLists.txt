@@ -34,6 +34,13 @@ add_executable(test_crypto test_crypto.c)
 target_link_libraries(test_crypto PRIVATE eos_crypto)
 add_test(NAME test_crypto COMMAND test_crypto)
 
+# --- test_crypto_failclosed: the stub signature routines must refuse ---
+# Deliberately NOT built with EOS_ALLOW_STUB_CRYPTO: the point is to assert the
+# refusal that keeps the secure-boot bypass closed.
+add_executable(test_crypto_failclosed test_crypto_failclosed.c)
+target_link_libraries(test_crypto_failclosed PRIVATE eos_crypto)
+add_test(NAME test_crypto_failclosed COMMAND test_crypto_failclosed)
+
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
 target_link_libraries(test_security PRIVATE eos_security eos_crypto)

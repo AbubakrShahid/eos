@@ -19,6 +19,17 @@ add_executable(test_kernel test_kernel.c)
 target_link_libraries(test_kernel PRIVATE eos_kernel)
 add_test(NAME test_kernel COMMAND test_kernel)
 
+# --- test_ipc_waiters: queue waiter-list bookkeeping (blocking paths) ---
+# Compiles ipc.c directly against scripted port/task mocks so the blocking
+# send/receive interleaving can be driven deterministically — test_kernel's
+# empty eos_port_yield() mock cannot reach these paths.
+add_executable(test_ipc_waiters test_ipc_waiters.c
+    ${CMAKE_SOURCE_DIR}/kernel/src/ipc.c)
+target_include_directories(test_ipc_waiters PRIVATE
+    ${CMAKE_SOURCE_DIR}/kernel/include
+    ${CMAKE_SOURCE_DIR}/core/include)
+add_test(NAME test_ipc_waiters COMMAND test_ipc_waiters)
+
 # --- test_heap: Kernel allocator and overflow handling ---
 add_executable(test_heap test_heap.c)
 target_link_libraries(test_heap PRIVATE eos_kernel)

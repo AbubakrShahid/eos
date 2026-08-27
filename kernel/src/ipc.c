@@ -30,6 +30,22 @@ typedef struct {
 
 static queue_t g_q[EOS_MAX_QUEUES];
 
+/* Remove task `tid` from a waiter list if present. Idempotent: safe to call
+ * when the task was already removed by a waker (see below). Returns 1 if a
+ * removal happened, 0 otherwise. Caller must hold the queue critical section. */
+static int q_remove_waiter(uint8_t *waiters, uint8_t *count, uint8_t tid)
+{
+    for (int i = 0; i < *count; i++) {
+        if (waiters[i] == tid) {
+            for (int j = i; j < *count - 1; j++)
+                waiters[j] = waiters[j + 1];
+            (*count)--;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int eos_queue_create(eos_queue_handle_t *out, size_t item_size, uint32_t capacity)
 {
     if (!out || item_size == 0 || capacity == 0) return EOS_KERN_INVALID;
@@ -99,19 +115,17 @@ int eos_queue_send(eos_queue_handle_t h, const void *item, uint32_t timeout_ms)
         memcpy(g_q[h].buf + g_q[h].head * g_q[h].item_size, item, g_q[h].item_size);
         g_q[h].head = (g_q[h].head + 1) % g_q[h].capacity;
         g_q[h].count++;
+        /* Drop ourselves from the waiter list. A waker only ever pops
+         * send_waiters[0]; if we were satisfied out of that order (e.g. woken
+         * by the timeout tick while another waiter was popped) our slot would
+         * otherwise linger and later cause a spurious eos_task_unblock(). */
+        q_remove_waiter(g_q[h].send_waiters, &g_q[h].send_waiter_count, caller);
         eos_port_exit_critical(crit);
         return EOS_KERN_OK;
     }
 
     /* Still full — timeout */
-    for (int i = 0; i < g_q[h].send_waiter_count; i++) {
-        if (g_q[h].send_waiters[i] == caller) {
-            for (int j = i; j < g_q[h].send_waiter_count - 1; j++)
-                g_q[h].send_waiters[j] = g_q[h].send_waiters[j + 1];
-            g_q[h].send_waiter_count--;
-            break;
-        }
-    }
+    q_remove_waiter(g_q[h].send_waiters, &g_q[h].send_waiter_count, caller);
     eos_port_exit_critical(crit);
     return EOS_KERN_TIMEOUT;
 }
@@ -160,19 +174,14 @@ int eos_queue_receive(eos_queue_handle_t h, void *item, uint32_t timeout_ms)
         memcpy(item, g_q[h].buf + g_q[h].tail * g_q[h].item_size, g_q[h].item_size);
         g_q[h].tail = (g_q[h].tail + 1) % g_q[h].capacity;
         g_q[h].count--;
+        /* Drop ourselves from the waiter list (see eos_queue_send for why). */
+        q_remove_waiter(g_q[h].recv_waiters, &g_q[h].recv_waiter_count, caller);
         eos_port_exit_critical(crit);
         return EOS_KERN_OK;
     }
 
     /* Still empty — timeout */
-    for (int i = 0; i < g_q[h].recv_waiter_count; i++) {
-        if (g_q[h].recv_waiters[i] == caller) {
-            for (int j = i; j < g_q[h].recv_waiter_count - 1; j++)
-                g_q[h].recv_waiters[j] = g_q[h].recv_waiters[j + 1];
-            g_q[h].recv_waiter_count--;
-            break;
-        }
-    }
+    q_remove_waiter(g_q[h].recv_waiters, &g_q[h].recv_waiter_count, caller);
     eos_port_exit_critical(crit);
     return EOS_KERN_TIMEOUT;
 }
